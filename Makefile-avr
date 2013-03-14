@@ -1,0 +1,111 @@
+ifndef DUDEDEV
+DUDEDEV = -c avrispmkii -P usb
+#DUDEDEV = -c abcmini -P /dev/parport0
+#DUDEDEV = -c ponyser -P /dev/ttyS0
+endif
+
+ifndef DUDEARGS
+DUDEARGS = -q -q
+endif
+
+AVRDUDE = avrdude $(DUDEDEV) $(DUDEARGS) -p $(DEVICE)
+
+ifndef CFLAGS
+CFLAGS = -Wall -Os -I.
+endif
+
+ifndef LDFLAGS
+LDFLAGS = 
+endif
+
+COMPILE = avr-gcc $(CFLAGS) -mmcu=$(DEVICE)
+
+ifndef OBJECTS
+OBJECTS = main.o
+endif
+
+all:	flash.hex
+
+main.elf:	$(OBJECTS)
+	$(COMPILE) -o main.elf $(OBJECTS) $(LDFLAGS)
+
+flash.hex:	main.elf
+	rm -f flash.hex
+	avr-objcopy -j .text -j .data -O ihex main.elf flash.hex
+	avr-size main.elf
+
+.c.o:
+	$(COMPILE) -c $< -o $@ -Wa,-ahl=$<.asmlist,-L
+
+.S.o:
+	$(COMPILE) -x assembler-with-cpp -c $< -o $@
+
+.c.s:
+	$(COMPILE) -S $< -o $@
+
+flash:	all
+	$(AVRDUDE) -V -U flash:w:flash.hex:i
+
+flashv:	all
+	$(AVRDUDE) -U flash:w:flash.hex:i
+
+rdflash:
+	$(AVRDUDE) -U flash:r:flashdump.bin:r
+	@echo flashdump.bin written.
+	$(AVRDUDE) -U flash:r:flashdump.hex:i
+	@echo flashdump.hex written.
+
+eep: all
+	avr-objcopy -j .eeprom --change-section-lma .eeprom=0 --set-section-flags=.eeprom="alloc,load" -O ihex main.elf eeprom.hex
+	$(AVRDUDE) -U eeprom:w:eeprom.hex:i
+
+rdeep:	
+	$(AVRDUDE) -U eeprom:r:eepdump.bin:r
+	@echo eepdump.bin written.
+	$(AVRDUDE) -U eeprom:r:eepdump.hex:i
+	@echo eepdump.hex written.
+
+fuse:
+ifdef EFUSE
+	$(AVRDUDE) -U efuse:w:$(EFUSE):m -U hfuse:w:$(HFUSE):m -U lfuse:w:$(LFUSE):m
+else
+	$(AVRDUDE) -U hfuse:w:$(HFUSE):m -U lfuse:w:$(LFUSE):m
+endif
+
+rdfuse:
+ifdef EFUSE
+	@$(AVRDUDE) -U lfuse:r:.lfuse:r -U hfuse:r:.hfuse:r -U efuse:r:.efuse:r -U lock:r:.lockb:r -U calibration:r:.calib:r \
+	&& hexdump .lfuse | sed -n -e 's/0000000 00/low  fuse: /;/:/p' \
+	&& hexdump .hfuse | sed -n -e 's/0000000 00/high fuse: /;/:/p' \
+	&& hexdump .efuse | sed -n -e 's/0000000 00/extd fuse: /;/:/p' \
+	&& hexdump .lockb | sed -n -e 's/0000000 00/lock byte: /;/:/p' \
+	&& hexdump .calib | sed -n -e 's/0000000/calibratn:/;/:/p' \
+	&& rm .lfuse .hfuse .lockb .calib
+else
+	@$(AVRDUDE) -U lfuse:r:.lfuse:r -U hfuse:r:.hfuse:r -U lock:r:.lockb:r -U calibration:r:.calib:r \
+	&& hexdump .lfuse | sed -n -e 's/0000000 00/low  fuse: /;/:/p' \
+	&& hexdump .hfuse | sed -n -e 's/0000000 00/high fuse: /;/:/p' \
+	&& hexdump .lockb | sed -n -e 's/0000000 00/lock byte: /;/:/p' \
+	&& hexdump .calib | sed -n -e 's/0000000/calibratn:/;/:/p' \
+	&& rm .lfuse .hfuse .lockb .calib
+endif
+
+lock:
+	$(AVRDUDE) -U lock:w:$(LOCKB):m
+
+erase:
+	$(AVRDUDE) -e
+
+reset:
+	$(AVRDUDE)
+
+clean:
+	rm -f flash.hex eeprom.hex flashdump.hex eepdump.hex flashdump.bin eepdump.bin main.elf $(OBJECTS) *.asmlist
+
+disasm:	main.elf
+	avr-objdump -d main.elf
+
+cpp:
+	$(COMPILE) -E main.c
+
+.PHONY: flash flashv rdflash eep rdeep fuse rdfuse lock erase reset clean disasm cpp
